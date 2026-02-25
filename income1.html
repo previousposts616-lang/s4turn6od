@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="my">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Accounting Pro - Global Sync Edition</title>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
+    <style>
+        :root {
+            --bg-grad: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            --glass-bg: rgba(255, 255, 255, 0.1);
+            --glass-border: rgba(255, 255, 255, 0.2);
+            --accent: #3b82f6; --income: #4ade80; --expense: #f87171; --text: #ffffff;
+        }
+        body { margin: 0; font-family: sans-serif; background: var(--bg-grad); background-attachment: fixed; color: var(--text); padding: 10px; }
+        .app-container { width: 100%; max-width: 480px; margin: auto; }
+        .glass-card { background: var(--glass-bg); backdrop-filter: blur(10px); border: 1px solid var(--glass-border); border-radius: 20px; padding: 18px; margin-bottom: 15px; }
+        .lcd-screen { background: #000; border: 2px solid #333; border-radius: 15px; padding: 15px; margin-bottom: 15px; }
+        .lcd-row { display: flex; justify-content: space-between; margin: 5px 0; font-family: monospace; }
+        input, select, button { width: 100%; padding: 14px; margin: 8px 0; border-radius: 15px; border: 1px solid var(--glass-border); background: rgba(255,255,255,0.05); color: white; outline: none; box-sizing: border-box; }
+        button { background: var(--accent); font-weight: bold; border: none; cursor: pointer; }
+        .tabs { display: flex; gap: 8px; margin-bottom: 15px; background: rgba(0,0,0,0.2); padding: 5px; border-radius: 20px; }
+        .tab-btn { padding: 10px; border: none; border-radius: 15px; background: transparent; color: #aaa; flex: 1; cursor: pointer; }
+        .tab-btn.active { background: var(--accent); color: white; }
+        .summary-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .summary-table th, .summary-table td { padding: 12px 10px; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.05); }
+        .hidden { display: none !important; }
+        .del-day { color: var(--expense); cursor: pointer; font-size: 14px; font-weight: bold; padding: 5px; border: 1px solid var(--expense); border-radius: 8px; }
+        #sync-status { font-size: 11px; text-align: center; margin-bottom: 10px; font-weight: bold; }
+        .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+        .modal-content { background: #1e293b; width: 90%; max-width: 400px; border-radius: 20px; border: 1px solid var(--glass-border); padding: 20px; max-height: 85vh; overflow-y: auto; }
+        .detail-item { padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+        .edit-btn { background: rgba(255,255,255,0.1); color: #aaa; padding: 5px 12px; border-radius: 8px; font-size: 11px; cursor: pointer; display: inline-block; margin-top: 5px; }
+    </style>
+</head>
+<body>
+
+<div class="app-container">
+    <div style="display: flex; justify-content: space-between; font-size: 10px; color: #aaa; margin-bottom: 5px;">
+        <span id="admin-info">User Mode</span>
+        <div id="sync-status"> Initializing...</div>
+    </div>
+
+    <div class="lcd-screen">
+        <div class="lcd-row"><span>INCOME:</span><span id="lcd-inc" style="color:var(--income)">0</span></div>
+        <div class="lcd-row"><span>EXPENSE:</span><span id="lcd-exp" style="color:var(--expense)">0</span></div>
+        <div class="lcd-row" style="border-top:1px solid #333; margin-top:5px; padding-top:5px;"><span>BALANCE:</span><span id="lcd-bal" style="color:var(--accent)">0</span></div>
+    </div>
+
+    <div style="text-align:right; font-size:11px; margin-bottom:10px;">
+        <span id="login-link" onclick="adminLogin()" style="cursor:pointer; color:var(--accent);"> Admin Login</span>
+        <span id="admin-tools" class="hidden">
+            <span onclick="addUser()" style="cursor:pointer; margin-right:15px; color:var(--income);">+ Add User</span>
+            <span onclick="adminLogout()" style="cursor:pointer; color:var(--expense);"> Logout</span>
+        </span>
+    </div>
+
+    <div class="tabs">
+        <button class="tab-btn active" onclick="showTab('personal', this)">စာရင်းသွင်း</button>
+        <button class="tab-btn" onclick="showTab('global', this)">အနှစ်ချုပ်</button>
+    </div>
+
+    <div id="personal-tab">
+        <div class="glass-card">
+            <select id="user-selector" onchange="switchUser()"></select>
+            <input type="date" id="entry-date" onchange="refreshAll()">
+        </div>
+        <div class="glass-card">
+            <input type="text" id="desc" placeholder="အကြောင်းအရာ">
+            <div style="display:flex; gap:8px;">
+                <input type="number" id="inc-amount" placeholder="ဝင်ငွေ">
+                <input type="number" id="exp-amount" placeholder="လက်ခ">
+            </div>
+            <button onclick="addEntry()" style="background: var(--income); color:#000;">SAVE TO CLOUD</button>
+        </div>
+        <div id="personal-list" class="glass-card"></div>
+    </div>
+
+    <div id="global-tab" class="hidden">
+        <div class="glass-card">
+            <select id="summary-user-select" onchange="renderUserSummary()"></select>
+            <div id="user-summary-view" class="hidden">
+                <div id="user-total-lcd" style="background: rgba(0,0,0,0.4); padding:10px; border-radius:15px; margin:10px 0;"></div>
+                <table class="summary-table">
+                    <thead>
+                        <tr>
+                            <th>ရက်စွဲ</th>
+                            <th style="color:var(--income)">ရငွေ</th>
+                            <th style="color:var(--expense)">လက်ခ</th>
+                            <th id="admin-del-head" class="hidden">ရှင်းရန်</th>
+                        </tr>
+                    </thead>
+                    <tbody id="daily-summary-body"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="details-modal" class="modal-overlay hidden">
+    <div class="modal-content">
+        <h3 id="modal-title" style="margin-top:0; color:var(--accent); border-bottom:1px solid #333; padding-bottom:10px;">Details</h3>
+        <div id="modal-body"></div>
+        <button onclick="closeModal()" style="margin-top:20px; background:#444; width:100%;">CLOSE</button>
+    </div>
+</div>
+
+<script>
+    const firebaseConfig = {
+        apiKey: "AIzaSyBU4jHlaI5GGXr68Bc-EkelgEqk4jH6Ua4",
+        authDomain: "account-86885.firebaseapp.com",
+        databaseURL: "https://account-86885-default-rtdb.firebaseio.com",
+        projectId: "account-86885",
+        storageBucket: "account-86885.firebasestorage.app",
+        messagingSenderId: "390654148742",
+        appId: "1:390654148742:android:d39585cd285711f5089107"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    let storage = { users: {}, lastUser: "", adminPass: "1234" };
+    let isAdmin = false;
+
+    // Load Local First
+    const localData = localStorage.getItem('acc_v5_fix');
+    if(localData) storage = JSON.parse(localData);
+
+    // Initial Cloud Fetch
+    db.ref('acc_v5_data').once('value').then(snap => {
+        const cloudData = snap.val();
+        if(cloudData) {
+            storage = cloudData;
+            localStorage.setItem('acc_v5_fix', JSON.stringify(storage));
+            updateUI();
+            document.getElementById('sync-status').innerText = " Cloud Connected";
+        }
+    });
+
+    function save() {
+        localStorage.setItem('acc_v5_fix', JSON.stringify(storage));
+        const status = document.getElementById('sync-status');
+        status.innerText = " Syncing...";
+        
+        db.ref('acc_v5_data').set(storage)
+        .then(() => {
+            status.innerText = " Cloud Synced";
+            status.style.color = "var(--income)";
+        })
+        .catch(() => {
+            status.innerText = " Sync Error";
+            status.style.color = "var(--expense)";
+        });
+    }
+
+    window.onload = () => {
+        document.getElementById('entry-date').value = new Date().toISOString().split('T')[0];
+        updateUI();
+    };
+
+    function updateUI() {
+        const uSel = document.getElementById('user-selector');
+        const sSel = document.getElementById('summary-user-select');
+        const names = Object.keys(storage.users || {});
+        let opts = '<option value="">User ရွေးပါ</option>';
+        names.forEach(n => opts += `<option value="${n}">${n}</option>`);
+        uSel.innerHTML = opts; sSel.innerHTML = opts;
+        if(storage.lastUser) uSel.value = storage.lastUser;
+        refreshAll();
+        renderUserSummary();
+    }
+
+    function addUser() {
+        const name = prompt("အမည်သစ်:");
+        if (name) {
+            if (!storage.users) storage.users = {};
+            storage.users[name] = []; 
+            storage.lastUser = name; 
+            save();
+            updateUI();
+        }
+    }
+
+    function addEntry() {
+        const u = document.getElementById('user-selector').value;
+        const desc = document.getElementById('desc').value;
+        const inc = parseFloat(document.getElementById('inc-amount').value) || 0;
+        const exp = parseFloat(document.getElementById('exp-amount').value) || 0;
+        
+        if(!u) return alert("User ရွေးပါ");
+        if(desc) {
+            const entry = { 
+                id: Date.now(), 
+                date: document.getElementById('entry-date').value, 
+                desc, inc, exp 
+            };
+            
+            if(!storage.users[u]) storage.users[u] = [];
+            storage.users[u].push(entry);
+            
+            document.getElementById('desc').value = "";
+            document.getElementById('inc-amount').value = "";
+            document.getElementById('exp-amount').value = "";
+            
+            save(); // Cloud ရော Local ရော တစ်ခါတည်းသိမ်းမယ်
+            refreshAll();
+        } else {
+            alert("အကြောင်းအရာ ထည့်ပါ");
+        }
+    }
+
+    function refreshAll() {
+        const u = document.getElementById('user-selector').value;
+        const date = document.getElementById('entry-date').value;
+        const list = document.getElementById('personal-list');
+        list.innerHTML = ""; let ti = 0, te = 0;
+
+        Object.keys(storage.users || {}).forEach(un => {
+            (storage.users[un] || []).forEach(e => {
+                if(e.date === date) {
+                    ti += e.inc; te += e.exp;
+                    if(u === un) {
+                        list.innerHTML += `<div style="display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid rgba(255,255,255,0.05);"><span>${e.desc}</span><span><b>${(e.inc || e.exp).toLocaleString()}</b></span></div>`;
+                    }
+                }
+            });
+        });
+        document.getElementById('lcd-inc').innerText = ti.toLocaleString();
+        document.getElementById('lcd-exp').innerText = te.toLocaleString();
+        document.getElementById('lcd-bal').innerText = (ti - te).toLocaleString();
+    }
+
+    function renderUserSummary() {
+        const u = document.getElementById('summary-user-select').value;
+        const view = document.getElementById('user-summary-view');
+        const dailyBody = document.getElementById('daily-summary-body');
+        const headDel = document.getElementById('admin-del-head');
+        if(!u || !storage.users[u]) return view.classList.add('hidden');
+        view.classList.remove('hidden');
+
+        const daily = {}; let ti = 0, te = 0;
+        storage.users[u].forEach(e => {
+            if(!daily[e.date]) daily[e.date] = { inc: 0, exp: 0 };
+            daily[e.date].inc += e.inc; daily[e.date].exp += e.exp;
+            ti += e.inc; te += e.exp;
+        });
+
+        document.getElementById('user-total-lcd').innerHTML = `<div class="lcd-row"><span>Total In:</span><span style="color:var(--income)">${ti.toLocaleString()}</span></div><div class="lcd-row"><span>Total Out:</span><span style="color:var(--expense)">${te.toLocaleString()}</span></div><div class="lcd-row" style="border-top:1px solid #333; margin-top:5px; padding-top:5px;"><span>Balance:</span><span style="color:var(--accent)">${(ti-te).toLocaleString()}</span></div>`;
+
+        headDel.classList.toggle('hidden', !isAdmin);
+        const sortedDates = Object.keys(daily).sort().reverse();
+        dailyBody.innerHTML = sortedDates.map(d => `<tr><td onclick="showDetails('${u}','${d}')" style="color:var(--accent); cursor:pointer;">${d}</td><td>${daily[d].inc.toLocaleString()}</td><td>${daily[d].exp.toLocaleString()}</td><td class="${isAdmin?'':'hidden'}"><span class="del-day" onclick="deleteDateData('${u}','${d}')"></span></td></tr>`).join('');
+    }
+
+    function showDetails(user, date) {
+        const modal = document.getElementById('details-modal');
+        const body = document.getElementById('modal-body');
+        document.getElementById('modal-title').innerText = date + " အသေးစိတ်";
+        const details = (storage.users[user] || []).filter(e => e.date === date);
+        body.innerHTML = details.map(e => `<div class="detail-item"><div style="display:flex; justify-content:space-between;"><span style="font-weight:bold;">${e.desc}</span><span style="color:${e.inc > 0 ? 'var(--income)' : 'var(--expense)'}">${(e.inc || e.exp).toLocaleString()}</span></div><div style="margin-top:8px; text-align:right;"><span class="edit-btn" onclick="editEntry('${user}', ${e.id})"> Edit</span></div></div>`).join('');
+        modal.classList.remove('hidden');
+    }
+
+    function editEntry(user, entryId) {
+        const entry = storage.users[user].find(e => e.id === entryId);
+        if(!entry) return;
+        const newDesc = prompt("အကြောင်းအရာ ပြင်ရန်:", entry.desc);
+        if(newDesc === null) return;
+        const newInc = prompt("ဝင်ငွေ ပြင်ရန်:", entry.inc);
+        const newExp = prompt("လက်ခ ပြင်ရန်:", entry.exp);
+        entry.desc = newDesc;
+        entry.inc = parseFloat(newInc) || 0;
+        entry.exp = parseFloat(newExp) || 0;
+        save();
+        showDetails(user, entry.date);
+    }
+
+    function deleteDateData(user, date) {
+        if(confirm(date + " စာရင်းအားလုံး ရှင်းလင်းမှာ သေချာပါသလား?")) {
+            storage.users[user] = storage.users[user].filter(e => e.date !== date);
+            save();
+            renderUserSummary();
+        }
+    }
+
+    function adminLogin() {
+        if(prompt("Admin Password:") === storage.adminPass) {
+            isAdmin = true;
+            document.getElementById('admin-info').innerText = " Admin Mode";
+            document.getElementById('admin-tools').classList.remove('hidden');
+            renderUserSummary();
+        }
+    }
+
+    function closeModal() { document.getElementById('details-modal').classList.add('hidden'); }
+    function showTab(t, btn) {
+        document.getElementById('personal-tab').classList.toggle('hidden', t !== 'personal');
+        document.getElementById('global-tab').classList.toggle('hidden', t !== 'global');
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active'); 
+        if(t === 'global') renderUserSummary();
+    }
+    function adminLogout() { location.reload(); }
+    function switchUser() { 
+        storage.lastUser = document.getElementById('user-selector').value; 
+        save(); 
+        refreshAll();
+    }
+</script>
+</body>
+</html>
