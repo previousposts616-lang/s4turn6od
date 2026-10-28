@@ -1,0 +1,6 @@
+# Overrides the build settings configured in the Netlify UI.
+# The UI build command ("com.icchecker.mk") is not a valid shell command.
+[build]
+  command = "echo 'No build step required'"
+  publish = "public"
+  functions = "netlify/functions"
